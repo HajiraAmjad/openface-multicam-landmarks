@@ -1,64 +1,108 @@
-# v2 — Obstacle-Aware Diffusion Trajectory Refiner
+# OpenFace Landmark Extraction + Multi-Camera Calibration
 
-Everything in this directory is additive. `planner_node.py` (v1) is not
-modified. `v2/` produces `planner_node_v2.py`, run as a separate entry
-point, so the old node stays as a known-good fallback the whole time.
+A pipeline for extracting facial landmarks from video using OpenFace, with calibration support for multi-camera setups. Developed at the Intelligent Space Robotics Laboratory (ISR Lab), Skoltech.
 
-## Why v2 exists
+---
 
-Two separate problems, addressed by two separate mechanisms:
-
-1. **No obstacle awareness.** The trained checkpoint
-   (`model_v2_epoch_50_sincos.pt`) conditions only on 5-dim pose+steering.
-   It cannot see the occupancy map. Fix: EDT-based gradient guidance at
-   inference time (Week 2), zero retraining.
-
-2. **Zigzag / non-smooth trajectories.** This is a *sampling* problem, not
-   a guidance problem. DDPM is stochastic — every denoising step draws
-   fresh noise, and every replanning cycle starts independently with no
-   coupling to the previous cycle's solution. So even near-identical robot
-   states 100ms apart can produce visibly different trajectories, which
-   shows up as left-right oscillation in closed loop. The `alpha=0.8`
-   temporal smoothing patch (already applied in v1) blends the symptom
-   away after the fact — it doesn't fix the cause.
-   Fix: DDIM (deterministic ODE sampler, Week 1), later reinforced by
-   warm-starting from the previous cycle's trajectory instead of fresh
-   noise (Week 3, only if still needed after DDIM).
-
-## Directory layout
+## Repository Structure
 
 ```
-v2/
-  profiling.py          # Gate 1 — done. Timing instrumentation, stdlib only.
-  ddim_scheduler.py      # Gate 2 — next. Deterministic sampler wrapper.
-  collision_cost.py      # Gate 3 — EDT field from OccupancyGrid.
-  guidance.py             # Gate 4 — gradient guidance term in the DDIM loop.
-  fallback.py              # Gate 5/6 — footprint check + A* fallback + status reasons.
-  planner_node_v2.py        # Entry point wiring all of the above together.
+openface-multicam-landmarks/
+├── openface_landmarks/
+│   ├── scripts/
+│   │   ├── extract_folder.py       # Main script — batch process a folder of videos
+│   │   ├── extract_video.py        # Process a single video
+│   │   ├── extract_image.py        # Process a single image
+│   │   └── download_models.py      # Download required OpenFace models
+│   ├── src/
+│   │   ├── landmark_extractor.py   # Core landmark extraction logic
+│   │   ├── face_detector.py        # Face detection module
+│   │   ├── openface_format.py      # Output formatting (OpenFace-compatible)
+│   │   ├── visualizer.py           # Visualization utilities
+│   │   └── __init__.py
+│   ├── docker/
+│   │   ├── Dockerfile              # Docker environment with OpenFace
+│   │   └── openface_wrapper.py     # Wrapper for running OpenFace in Docker
+│   ├── tests/
+│   │   └── test_demo.py
+│   ├── requirements.txt
+│   ├── INSTRUCTIONS.md             # Detailed setup and usage guide
+│   └── README.md
+└── calibration_results.json        # 3-camera calibration output
 ```
 
-## Gate checklist
+---
 
-- [ ] **Gate 1 — Profiling.** `CycleProfiler` wired into every stage of the
-      loop. Know exactly where the 720ms goes before changing anything.
-- [ ] **Gate 2 — DDIM + FP16.** 20-step deterministic sampling, trajectory
-      geometry visually comparable to the 100-step DDPM baseline, latency
-      down, and — this is the one to actually check — the zigzag should be
-      visibly reduced in RViz even before any guidance is added.
-- [ ] **Gate 3 — EDT field.** `distance_transform_edt` output overlaid on
-      RViz matches physical obstacles, frame_id matches the RViz fixed
-      frame (this bit you already lost a day to once — don't repeat it),
-      coordinate/resolution alignment confirmed.
-- [ ] **Gate 4 — Guidance.** Single obstacle placed on the path → trajectory
-      bends into free space, no A* anchor term yet, guidance-only.
-- [ ] **Gate 5 — Stability.** 30-minute continuous CoppeliaSim run, stable
-      publish frequency, no leaks, no dropped cycles.
-- [ ] **Gate 6 — Delivery.** A* vs diffusion-refiner screencast across
-      Vadim's narrowed test scenarios, metrics packaged for Dmitry.
+## Quick Start
 
-## Explicitly out of scope
+### 1. Install dependencies
 
-No retraining, no new dataset, no CNN/transformer map encoder, no
-action-space diffusion, no A*-anchor loss until Gate 4 passes on
-guidance alone. If a step isn't in this list, it isn't happening this
-internship.
+```bash
+pip install -r openface_landmarks/requirements.txt
+```
+
+### 2. Download OpenFace models
+
+```bash
+python3 openface_landmarks/scripts/download_models.py
+```
+
+### 3. Run on a folder of videos
+
+```bash
+python3 openface_landmarks/scripts/extract_folder.py \
+    --input your_videos_folder/ \
+    --save_video
+```
+
+For full setup instructions, Docker usage, and output format details, see [`INSTRUCTIONS.md`](openface_landmarks/INSTRUCTIONS.md).
+
+---
+
+## Camera Calibration
+
+Calibrated for a 3-camera setup (Front, Left, Right) using a checkerboard pattern.
+
+| Parameter | Value |
+|---|---|
+| Reprojection error | 0.086 px ✅ (threshold < 1.0 px) |
+| Multi-camera error | 1.12 px |
+| Frames used | 22 |
+
+**Camera distances:**
+- Front ↔ Left: 27.1 cm
+- Front ↔ Right: 45.1 cm
+- Left ↔ Right: 64.0 cm
+
+**Camera angles (relative to Front):**
+- Front–Left: 18.1°
+- Front–Right: 34.2°
+- Left–Right: 52.3°
+
+Full calibration results in [`calibration_results.json`](calibration_results.json).
+
+---
+
+## Docker (Optional)
+
+If OpenFace is not installed locally, use the provided Docker setup:
+
+```bash
+cd openface_landmarks/docker
+docker build -t openface-landmarks .
+docker run -v $(pwd):/data openface-landmarks python3 openface_wrapper.py
+```
+
+---
+
+## Requirements
+
+- Python 3.8+
+- OpenFace (local install or Docker)
+- See `requirements.txt` for Python dependencies
+
+---
+
+## Affiliation
+
+Developed as part of multi-sensor data collection research at **ISR Lab, Skoltech**.
