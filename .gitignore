@@ -1,0 +1,12 @@
+*.mp4
+*.avi
+*.mov
+*.zip
+your_videos_folder/
+output*/
+frames*/
+__pycache__/
+*.pyc
+.env
+venv/
+*.csv
